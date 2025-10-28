@@ -656,5 +656,6 @@ app.get("/system-info", (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
+  // console.log(`Server listening on port ${PORT}`);
+  console.log("System information loaded successfully");
 });
