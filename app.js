@@ -6,6 +6,68 @@ import cors from "cors";
 const app = express();
 const PORT = 4001;
 
+function getPrimaryIpAddress() {
+  const nets = os.networkInterfaces();
+
+  const virtualPatterns = [
+    /docker/i,
+    /veth/i,
+    /br-/i,
+    /virbr/i,
+    /nat/i,
+    /vmware/i,
+    /hyper-v/i,
+    /vbox/i,
+    /virtual/i,
+    /wsl/i,
+    /tun/i,
+    /tap/i,
+  ];
+
+  const isVirtual = (name) =>
+    virtualPatterns.some((pattern) => pattern.test(name));
+
+  const isPhysicalMac = (mac) => {
+    if (!mac) return false;
+    mac = mac.toUpperCase();
+    if (mac === "00:00:00:00:00:00") return false;
+    const firstByte = parseInt(mac.split(":")[0], 16);
+    return (firstByte & 0x02) === 0; // Not locally-administered
+  };
+
+  let lanIp = null;
+  let wifiIp = null;
+
+  for (const name of Object.keys(nets)) {
+    const addrs = nets[name];
+
+    if (isVirtual(name)) continue;
+
+    for (const net of addrs) {
+      if (net.family !== "IPv4") continue;
+
+      // Keep loopback for fallback
+      if (net.address === "127.0.0.1") continue;
+
+      if (!isPhysicalMac(net.mac)) continue;
+
+      // Ethernet interfaces
+      if (/eth|enp|en\d|ethernet/i.test(name)) lanIp = net.address;
+
+      // WiFi interfaces
+      if (/wlan|wifi|wl/i.test(name)) wifiIp = net.address;
+    }
+  }
+
+  // Priority: LAN > WiFi > loopback
+  if (lanIp) return lanIp;
+  if (wifiIp) return wifiIp;
+  return "127.0.0.1";
+}
+
+// Example usage
+//console.log("Primary IP:", getPrimaryIpAddress());
+
 function runCommand(cmd) {
   try {
     return execSync(cmd, { stdio: ["pipe", "pipe", "ignore"] })
@@ -272,52 +334,6 @@ function getLinuxSystemInfo() {
   };
 }
 
-// function getMacSystemInfo() {
-//   const serialNumber =
-//     runCommand(
-//       "system_profiler SPHardwareDataType | awk '/Serial/ {print $4}'"
-//     ) ||
-//     runCommand(
-//       "ioreg -l | grep IOPlatformSerialNumber | awk -F '\"' '{print $4}'"
-//     ) ||
-//     "Unavailable";
-
-//   const processorId =
-//     runCommand("ioreg -l | grep IOPlatformUUID | awk -F '\"' '{print $4}'") ||
-//     "Unavailable";
-
-//   const cpuModel =
-//     runCommand("sysctl -n machdep.cpu.brand_string") || "Unavailable";
-
-//   const manufacturer = "Apple";
-
-//   const model =
-//     runCommand(
-//       "system_profiler SPHardwareDataType | awk -F': ' '/Model Name/ {print $2}'"
-//     ) ||
-//     runCommand(
-//       "system_profiler SPHardwareDataType | awk -F': ' '/Model Identifier/ {print $2}'"
-//     ) ||
-//     "Unavailable";
-
-//   const osVersion =
-//     runCommand("sw_vers -productName") +
-//       " " +
-//       runCommand("sw_vers -productVersion") ||
-//     `${os.type()} ${os.release()} (${os.arch()})`;
-
-//   return {
-//     serialNumber,
-//     processorId,
-//     cpuModel,
-//     manufacturer,
-//     model,
-//     osVersion,
-//     macAddresses: getMacMacAddresses(),
-//   };
-// }
-
-// --- Universal info collector ---
 // --- macOS system info ---
 function getMacSystemInfo() {
   // --- MAC addresses ---
@@ -399,8 +415,8 @@ app.use(cors());
 const info = getSystemInfo();
 app.get("/system-info", (req, res) => {
   try {
-    const ipAddress = req.ip.replace("::ffff:", "");
-    res.json({ ...info, ipAddress });
+    // const ipAddress = req.ip.replace("::ffff:", "");
+    res.json({ ...info, ipAddress: getPrimaryIpAddress() });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to retrieve system info" });
